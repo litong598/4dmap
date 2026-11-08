@@ -1,7 +1,9 @@
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 export function addTreeTerrainLayer(lmap, maplibregl) {
   if (typeof THREE === 'undefined') return;
-  if (!THREE.GLTFLoader) {
-    console.warn('[tree] THREE.GLTFLoader 未加载');
+  if (!GLTFLoader) {
+    console.warn('[tree] GLTFLoader 未加载');
     return;
   }
 
@@ -85,7 +87,7 @@ export function addTreeTerrainLayer(lmap, maplibregl) {
   }
 
   function loadGLBModels() {
-    const loader = new THREE.GLTFLoader();
+    const loader = new GLTFLoader();
     const tasks = MODEL_URLS.map(url => new Promise((resolve, reject) => {
       loader.load(url,
         g => {
