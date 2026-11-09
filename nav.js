@@ -7,6 +7,7 @@ for (const pair of [...基礎字對, ...逕轉一對多字對, ...微調字對])
 	_s2t.set(pair[0], pair[1]);
 	_t2s.set(pair[1], pair[0]);
 }
+
 function toSimplified(str) {
 	return String(str || '').split('').map((c) => _t2s.get(c) || c).join('');
 }
@@ -83,7 +84,6 @@ export class Orienting {
 	}
 }
 
-// 大圆距离
 function _haversine(lat1, lng1, lat2, lng2) {
 	const R = 6_371_000.0;
 	const p1 = lat1 * Math.PI / 180, p2 = lat2 * Math.PI / 180;
@@ -99,7 +99,7 @@ const DRIVEABLE = new Set([
 	"motorway_link", "trunk_link", "primary_link", "secondary_link", "tertiary_link"
 ]);
 
-// 路线导航
+// 路线导航：输入地名选起终点，在前端路网图上跑 Dijkstra 并绘制路线
 export class RouteNavigation {
 	constructor(lmap, maplibregl) {
 		this.lmap = lmap;
@@ -115,15 +115,13 @@ export class RouteNavigation {
 		this.markers = [];
 	}
 
-	// 加载路网
-	async load(networkUrl) {
 		const net = await fetch(networkUrl).then((r) => { if (!r.ok) throw new Error(networkUrl); return r.json(); });
 		this.network = net;
 		this.places = net.places || [];
 		this._buildAdj();
 	}
 
-	buildAdj() {
+	_buildAdj() {
 		this.walkAdj = {};
 		this.driveAdj = {};
 		this.driveNodes = new Set();
@@ -148,8 +146,7 @@ export class RouteNavigation {
 		});
 	}
 
-
-	nearestNode(lng, lat, candidates) {
+	_nearestNode(lng, lat, candidates) {
 		let best = null, bestD = Infinity;
 		const ids = candidates || Object.keys(this.network.nodes);
 		for (const id of ids) {
@@ -160,7 +157,7 @@ export class RouteNavigation {
 		return best;
 	}
 
-	heapPush(heap, item) {
+	_heapPush(heap, item) {
 		heap.push(item);
 		let i = heap.length - 1;
 		while (i > 0) {
@@ -170,13 +167,13 @@ export class RouteNavigation {
 			i = parent;
 		}
 	}
-	heapPop(heap) {
+	_heapPop(heap) {
 		const top = heap[0];
 		const last = heap.pop();
 		if (heap.length) { heap[0] = last; this._siftDown(heap, 0); }
 		return top;
 	}
-	siftDown(heap, i) {
+	_siftDown(heap, i) {
 		const n = heap.length;
 		while (true) {
 			const l = i * 2 + 1, r = l + 1;
@@ -189,7 +186,8 @@ export class RouteNavigation {
 		}
 	}
 
-	dijkstra(adj, src, dst) {
+	// 在指定邻接表上求最短路
+	_dijkstra(adj, src, dst) {
 		const dist = {}, prev = {}, settled = new Set();
 		const heap = [[0, src]];
 		dist[src] = 0;
@@ -214,6 +212,7 @@ export class RouteNavigation {
 		return { path: path.reverse(), dist: dist[dst] };
 	}
 
+	// 按起终点地名与出行方式规划路线并绘制
 	planRoute(nameA, nameB, mode = "walk") {
 		const a = this.matchPlaces(nameA)[0];
 		const b = this.matchPlaces(nameB)[0];
@@ -239,7 +238,7 @@ export class RouteNavigation {
 		};
 	}
 
-	renderRoute(path) {
+	_renderRoute(path) {
 		this._clearRoute();
 		const coords = path.map((id) => this.network.nodes[id]);
 		const geojson = {
@@ -278,13 +277,13 @@ export class RouteNavigation {
 		this._fitBounds(coords);
 	}
 
-	fitBounds(coords) {
+	_fitBounds(coords) {
 		const bounds = new this.maplibregl.LngLatBounds();
 		coords.forEach((c) => bounds.extend(c));
 		this.lmap.fitBounds(bounds, { padding: 60, maxZoom: 17 });
 	}
 
-	clearRoute() {
+	_clearRoute() {
 		const lmap = this.lmap;
 		[this.lineLayer, this.casingLayer].forEach((id) => {
 			if (lmap.getLayer(id)) lmap.removeLayer(id);
