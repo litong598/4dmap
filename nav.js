@@ -1,13 +1,14 @@
 import { 基礎字對 } from './cvt/Characters.js';
 import { 逕轉一對多字對, 微調字對 } from './cvt/Finetunes.js';
 
+// 简繁双向字表：由项目自带 cvt 字对构建，用于地名检索归一化
 const _s2t = new Map(), _t2s = new Map();
 for (const pair of [...基礎字對, ...逕轉一對多字對, ...微調字對]) {
 	if (!pair || pair.length < 2) continue;
 	_s2t.set(pair[0], pair[1]);
 	_t2s.set(pair[1], pair[0]);
 }
-
+// 繁体/异体 -> 简体（逐字），检索前把输入与地名统一到简体
 function toSimplified(str) {
 	return String(str || '').split('').map((c) => _t2s.get(c) || c).join('');
 }
@@ -84,6 +85,7 @@ export class Orienting {
 	}
 }
 
+// ---- 大圆距离（米），用于地名吸附最近路网节点 ----
 function _haversine(lat1, lng1, lat2, lng2) {
 	const R = 6_371_000.0;
 	const p1 = lat1 * Math.PI / 180, p2 = lat2 * Math.PI / 180;
@@ -92,7 +94,7 @@ function _haversine(lat1, lng1, lat2, lng2) {
 	return 2 * R * Math.asin(Math.sqrt(a));
 }
 
-// 驾车可通行的车行道类别
+// 驾车可通行的车行道类别（步行专用道 footway/pedestrian/path/steps/track 排除）
 const DRIVEABLE = new Set([
 	"motorway", "trunk", "primary", "secondary", "tertiary", "residential",
 	"unclassified", "living_street", "service",
@@ -115,6 +117,8 @@ export class RouteNavigation {
 		this.markers = [];
 	}
 
+	// 加载路网（地名索引内嵌在 network.places）
+	async load(networkUrl) {
 		const net = await fetch(networkUrl).then((r) => { if (!r.ok) throw new Error(networkUrl); return r.json(); });
 		this.network = net;
 		this.places = net.places || [];
@@ -135,6 +139,7 @@ export class RouteNavigation {
 		}
 	}
 
+	// 地名模糊匹配：输入与地名都经 cvt 字表归一到简体，兼容繁简双向输入
 	matchPlaces(keyword) {
 		const k = String(keyword || "").trim().toLowerCase();
 		if (!k) return [];
@@ -146,6 +151,7 @@ export class RouteNavigation {
 		});
 	}
 
+	// 吸附到离给定坐标最近的路网节点；candidates 为允许节点集合（驾车模式传车行节点）
 	_nearestNode(lng, lat, candidates) {
 		let best = null, bestD = Infinity;
 		const ids = candidates || Object.keys(this.network.nodes);
@@ -157,6 +163,7 @@ export class RouteNavigation {
 		return best;
 	}
 
+	// 二叉堆辅助：压入 / 弹出最小距离节点
 	_heapPush(heap, item) {
 		heap.push(item);
 		let i = heap.length - 1;
@@ -186,7 +193,7 @@ export class RouteNavigation {
 		}
 	}
 
-	// 在指定邻接表上求最短路
+	// Dijkstra：在指定邻接表上求最短路，返回 { path, dist }；不可达返回 null
 	_dijkstra(adj, src, dst) {
 		const dist = {}, prev = {}, settled = new Set();
 		const heap = [[0, src]];
@@ -212,7 +219,7 @@ export class RouteNavigation {
 		return { path: path.reverse(), dist: dist[dst] };
 	}
 
-	// 按起终点地名与出行方式规划路线并绘制
+	// 按起终点地名与出行方式规划路线并绘制；mode: "walk" 步行 | "drive" 驾车
 	planRoute(nameA, nameB, mode = "walk") {
 		const a = this.matchPlaces(nameA)[0];
 		const b = this.matchPlaces(nameB)[0];
