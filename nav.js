@@ -170,7 +170,7 @@ export class RouteNavigation {
 			i = parent;
 		}
 	}
-	_heapPop(heap) {
+	heapPop(heap) {
 		const top = heap[0];
 		const last = heap.pop();
 		if (heap.length) { heap[0] = last; this._siftDown(heap, 0); }
