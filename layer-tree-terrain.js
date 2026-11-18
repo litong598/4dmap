@@ -41,17 +41,6 @@ export function addTreeTerrainLayer(lmap, maplibregl) {
     return [(m.x - originMerc.x) / unit, (originMerc.y - m.y) / unit];
   }
  
-  function toLngLat(e, n) {
-    const unit = originMerc.meterInMercatorCoordinateUnits();
-    const mc = new maplibregl.MercatorCoordinate(
-      originMerc.x + e * unit,
-      originMerc.y - n * unit,
-      0
-    );
-    const ll = mc.toLngLat();
-    return [ll.lng, ll.lat];
-  }
-
   function inRing(x, y, ring) {
     let ins = false;
     for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
@@ -67,23 +56,64 @@ export function addTreeTerrainLayer(lmap, maplibregl) {
     return true;
   }
 
-  function queryElev(lng, lat) {
-    try {
-      const e = lmap.queryTerrainElevation([lng, lat]);
-      return (e == null || isNaN(e)) ? null : e;
-    } catch (err) {
-      return null;
-    }
-  }
+  const TILE_EXTENT = 8192;
+  let lastCoverage = null;
+  let lastTreeData = null;
+  let lastExaggeration = null;
+  let warnedTerrainAPI = false;
 
-  async function waitTerrainReady() {
-    const c = lmap.getCenter();
-    for (let i = 0; i < 40; i++) {
-      const e = queryElev(c.lng, c.lat);
-      if (e != null) return true;
-      await new Promise(r => setTimeout(r, 500));
+  function updateTerrainHeights() {
+    // getTerrain() 返回配置。实际渲染瓦片索引在 Terrain 对象上。
+    const terrain = lmap.terrain;
+    if (!terrain?.getCoverageIndex && lmap.getTerrain() && !warnedTerrainAPI) {
+      warnedTerrainAPI = true;
+      console.warn('[tree] 当前 MapLibre 版本未提供地形覆盖索引，暂不显示无可用高程的树');
     }
-    return false;
+    const coverage = terrain?.getCoverageIndex?.() ?? null;
+    const exaggeration = terrain?.exaggeration ?? 1;
+    if (coverage === lastCoverage && treeData === lastTreeData &&
+        exaggeration === lastExaggeration) return false;
+
+    lastCoverage = coverage;
+    lastTreeData = treeData;
+    lastExaggeration = exaggeration;
+    let changed = false;
+    for (const tree of treeData) {
+      let sampler = null;
+      let x = 0;
+      let y = 0;
+      if (coverage) {
+        const wrap = Math.floor(tree.worldX);
+        // 索引按从细到粗排列。匹配到无 DEM 的绘制瓦片时，
+        // 保持隐藏，不能自行选一块没有用于绘制此处的地形。
+        for (const z of coverage.zooms) {
+          const scale = 2 ** z;
+          const scaledX = (tree.worldX - wrap) * scale;
+          const scaledY = tree.worldY * scale;
+          const tx = Math.floor(scaledX);
+          const ty = Math.floor(scaledY);
+          const key = wrap + '/' + z + '/' + tx + '/' + ty;
+          const match = coverage.samplerPerTile.get(key);
+          if (match === undefined) continue;
+          sampler = match;
+          x = (scaledX - tx) * TILE_EXTENT;
+          y = (scaledY - ty) * TILE_EXTENT;
+          break;
+        }
+      }
+
+      // 只有负责此处地形的采样器变化时才重新查高度。
+      if (tree.terrainSampler === sampler && tree.exaggeration === exaggeration) continue;
+      tree.terrainSampler = sampler;
+      tree.exaggeration = exaggeration;
+      const sample = sampler ? sampler(x, y, TILE_EXTENT) * exaggeration : null;
+      const elev = Number.isFinite(sample) ? sample : null;
+      if (elev !== tree.elev) {
+        tree.elev = elev;
+        changed = true;
+      }
+    }
+    return changed;
   }
 
   function loadGLBModels() {
@@ -109,12 +139,14 @@ export function addTreeTerrainLayer(lmap, maplibregl) {
     const rad = hash2(gx, gy, 1) * JITTER_M;
     const e = gx + rad * Math.cos(ang);
     const n = gy + rad * Math.sin(ang);
-    const [lng, lat] = toLngLat(e, n);
+    const unit = originMerc.meterInMercatorCoordinateUnits();
     treeData.push({
       gx, gy, east: e, north: n,
-      lng, lat,
-      elev: queryElev(lng, lat),
-      elevChecked: 0,  
+      worldX: originMerc.x + e * unit,
+      worldY: originMerc.y - n * unit,
+      elev: null,
+      terrainSampler: null,
+      exaggeration: null,
       sc: 0.8 + hash2(gx, gy, 2) * 0.6,
       rotY: hash2(gx, gy, 3) * Math.PI * 2,
       v: Math.floor(hash2(gx, gy, 4) * VARIANTS)
@@ -233,9 +265,6 @@ export function addTreeTerrainLayer(lmap, maplibregl) {
     if (started) return;
     started = true;
 
-    const ready = await waitTerrainReady();
-    if (!ready) return;
-
     try {
       variants = await loadGLBModels();
     } catch (e) {
@@ -319,11 +348,10 @@ export function addTreeTerrainLayer(lmap, maplibregl) {
         }
         for (let i = 0; i < treeData.length; i++) {
           const t = treeData[i];
-          const visible = t.elev != null;
-          const s = visible ? t.sc : 0;
+          if (t.elev == null) continue;
           const k = idx[t.v]++;
-          d.position.set(t.east, (t.elev || 0), t.north);
-          d.scale.set(s, s, s);
+          d.position.set(t.east, t.elev, t.north);
+          d.scale.setScalar(t.sc);
           d.rotation.set(0, t.rotY, 0);
           d.updateMatrix();
           if (this.instanced[t.v]) {
@@ -345,6 +373,8 @@ export function addTreeTerrainLayer(lmap, maplibregl) {
       render(gl, args) {
         if (!originMerc) return;
         if (lmap.getZoom() < TREE_MIN_ZOOM) return;
+        // 地图这一帧确定了用于绘制的地形，再提交树的位置和可见状态。
+        if (treeData.length && updateTerrainHeights()) this.applyMatrices();
         const mm = Array.isArray(args)
           ? args
           : (args.defaultProjectionData ? args.defaultProjectionData.mainMatrix : args.projectionMatrix);
@@ -368,27 +398,6 @@ export function addTreeTerrainLayer(lmap, maplibregl) {
       console.error(e);
       return;
     }
-    const ELEV_CONFIRM_TIMES = 2;
-    function updateHeights() {
-      if (!lmap.getTerrain()) return;
-      let changed = false;
-      for (const t of treeData) {
-        if (t.elevChecked >= ELEV_CONFIRM_TIMES && t.elev != null) continue;
-        const e = queryElev(t.lng, t.lat);
-        if (e == null) continue;
-        if (t.elev == null || Math.abs(e - t.elev) > 0.01) {
-          t.elev = e;
-          changed = true;
-        }
-        t.elevChecked = (t.elevChecked || 0) + 1;
-      }
-      if (changed && layer && layer.applyMatrices) layer.applyMatrices();
-    }
-    lmap.on('idle', updateHeights);
-    lmap.on('data', (ev) => {
-      if (ev.sourceId === 'terrainSource') updateHeights();
-    });
-
     function scheduleGrow() {
       if (refreshTimer) clearTimeout(refreshTimer);
       refreshTimer = setTimeout(() => {
