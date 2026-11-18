@@ -8,7 +8,7 @@ export function addTreeTerrainLayer(lmap, maplibregl) {
   }
 
   const TOTAL_MAX = 10000;   // 视野内树数上限
-  const GRID_M = 20;         // 网格树距（米）
+  const GRID_M = 12;         // 网格树距（米）
   const JITTER_M = 3;       // 每棵树极坐标随机偏移最大距离（米）
   const VARIANTS = 3;       // 树模型变体数
 
