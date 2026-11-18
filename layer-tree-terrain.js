@@ -379,13 +379,14 @@ export function addTreeTerrainLayer(lmap, maplibregl) {
           ? args
           : (args.defaultProjectionData ? args.defaultProjectionData.mainMatrix : args.projectionMatrix);
         const m = new THREE.Matrix4().fromArray(mm);
+        const horizontalUnit = originMerc.meterInMercatorCoordinateUnits();
+        // MapLibre ???????????????????
+        // X/Y ??????????????? Z ????????
+        const viewCenter = maplibregl.MercatorCoordinate.fromLngLat(lmap.getCenter(), 0);
+        const heightUnit = viewCenter.meterInMercatorCoordinateUnits();
         const l = new THREE.Matrix4()
           .makeTranslation(originMerc.x, originMerc.y, originMerc.z)
-          .scale(new THREE.Vector3(
-            originMerc.meterInMercatorCoordinateUnits(),
-            -originMerc.meterInMercatorCoordinateUnits(),
-            originMerc.meterInMercatorCoordinateUnits()
-          ));
+          .scale(new THREE.Vector3(horizontalUnit, -horizontalUnit, heightUnit));
         this.camera.projectionMatrix = m.multiply(l);
         this.renderer.state.reset();
         this.renderer.render(this.scene, this.camera);
