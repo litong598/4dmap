@@ -351,7 +351,7 @@ export function addTreeTerrainLayer(lmap, maplibregl) {
           if (t.elev == null) continue;
           const k = idx[t.v]++;
           d.position.set(t.east, t.elev, t.north);
-          d.scale.setScalar(t.sc);
+          d.scale.setScalar(t.sc * 0.4);
           d.rotation.set(0, t.rotY, 0);
           d.updateMatrix();
           if (this.instanced[t.v]) {
