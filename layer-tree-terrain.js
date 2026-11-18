@@ -84,8 +84,6 @@ export function addTreeTerrainLayer(lmap, maplibregl) {
       let y = 0;
       if (coverage) {
         const wrap = Math.floor(tree.worldX);
-        // 索引按从细到粗排列。匹配到无 DEM 的绘制瓦片时，
-        // 保持隐藏，不能自行选一块没有用于绘制此处的地形。
         for (const z of coverage.zooms) {
           const scale = 2 ** z;
           const scaledX = (tree.worldX - wrap) * scale;
@@ -102,7 +100,6 @@ export function addTreeTerrainLayer(lmap, maplibregl) {
         }
       }
 
-      // 只有负责此处地形的采样器变化时才重新查高度。
       if (tree.terrainSampler === sampler && tree.exaggeration === exaggeration) continue;
       tree.terrainSampler = sampler;
       tree.exaggeration = exaggeration;
@@ -153,7 +150,6 @@ export function addTreeTerrainLayer(lmap, maplibregl) {
     });
   }
 
-  // 只扫描视野附近的树林，先记录树位，不创建树也不查高程。
   function collectTreeCells(co, area, candidates) {
     if (!co[0]?.length) return;
     const outer = co[0].map(([lng, lat]) => toEastNorth(lng, lat));
@@ -235,7 +231,6 @@ export function addTreeTerrainLayer(lmap, maplibregl) {
       }
     }
 
-    // 新旧树位用同样的排序规则。先选中树位，再为新树查高程。
     const selected = [...candidates.entries()];
     if (selected.length > TOTAL_MAX) {
       selected.sort(([, a], [, b]) =>
