@@ -6,12 +6,12 @@ if (/\sQQ|micromessenger/i.test(navigator.userAgent.toLowerCase())){
 }
 import * as maplibregl from 'https://unpkg.com/maplibre-gl@6.19.0/dist/maplibre-gl.mjs';
 import { getSubsolarPoint, TerminatorLayer } from './layer-terminator.js';
-import { 轉瓦內字 } from './cvt/cc.js';
+import { 轉瓦內字 } from './cvt/cc.js?g=b';
 import { Orienting, RouteNavigation } from './nav.js?t=4';
-import { addTreeTerrainLayer } from "./layer-tree-terrain.js?v=11";
+import { addTreeTerrainLayer } from './layer-tree-terrain.js?v=11';
 const pmProtocol = new pmtiles.Protocol();
 maplibregl.addProtocol('pmtiles',pmProtocol.tile);
-const PMTILES_NAME = ['鄉以上地點','中國无港澳臺海域','中國政區界','海深','公海和南極'];
+const PMTILES_NAME = ['鄉以上地點','中國无港澳臺海域','中國政區界','海深','公海和南極','木'];
 const TILES_LOC = 'https://pub-76f7e7fbf50f4423b85486dda0feb0c9.r2.dev/瓦/';
 for (const pmtilesUrl of PMTILES_NAME){
 	const p = new pmtiles.PMTiles(TILES_LOC + pmtilesUrl +'.pmtiles');
@@ -122,6 +122,9 @@ const lmap = new maplibregl.Map({
 			},
 			公海和南極: {
 				type: 'vector', url: `pmtiles://${TILES_LOC}公海和南極.pmtiles`
+			},
+			補自然元素: {
+				type: 'vector', url: `pmtiles://${TILES_LOC}木.pmtiles`
 			}
 		},
 		layers: 諸層,
@@ -211,9 +214,9 @@ lmap.on('zoomend',()=>{
 lmap.on("click", (e) => {
 	const features = lmap.queryRenderedFeatures(e.polygon);
 	for (const f of features) {
-		if (f.properties.class === "park") {
-			console.log(f.properties);
-		}
+		//if (f.properties.class === "park") {
+			console.log(f);
+		//}
 	}
 });
 addTreeTerrainLayer(lmap,maplibregl);
