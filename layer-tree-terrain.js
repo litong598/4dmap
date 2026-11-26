@@ -24,6 +24,11 @@ export function addTreeTerrainLayer(lmap, maplibregl) {
   let variants = null;
   let originMerc = null;       
   let originLng = 0, originLat = 0;
+  // 种树网格使用 originMerc；以下状态只用于绘制。
+  let renderMerc = null;
+  let renderEast = 0;
+  let renderNorth = 0;
+  const RENDER_REBASE_M = 256;
   let layer = null;
   let refreshTimer = null;
   const TREE_MIN_ZOOM = 17;
@@ -41,6 +46,19 @@ export function addTreeTerrainLayer(lmap, maplibregl) {
     return [(m.x - originMerc.x) / unit, (originMerc.y - m.y) / unit];
   }
  
+  function updateRenderOrigin(centerMerc) {
+    const unit = originMerc.meterInMercatorCoordinateUnits();
+    const east = (centerMerc.x - originMerc.x) / unit;
+    const north = (originMerc.y - centerMerc.y) / unit;
+    const distance2 = (east - renderEast) ** 2 + (north - renderNorth) ** 2;
+    if (renderMerc && distance2 < RENDER_REBASE_M ** 2) return false;
+
+    renderMerc = centerMerc;
+    renderEast = east;
+    renderNorth = north;
+    return true;
+  }
+
   function inRing(x, y, ring) {
     let ins = false;
     for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
@@ -300,6 +318,9 @@ export function addTreeTerrainLayer(lmap, maplibregl) {
     originLng = c.lng;
     originLat = c.lat;
     originMerc = maplibregl.MercatorCoordinate.fromLngLat([c.lng, c.lat], 0);
+    renderMerc = originMerc;
+    renderEast = 0;
+    renderNorth = 0;
 
     layer = {
       id: 'trees-3d',
@@ -374,7 +395,11 @@ export function addTreeTerrainLayer(lmap, maplibregl) {
           const t = treeData[i];
           if (t.elev == null) continue;
           const k = idx[t.v]++;
-          d.position.set(t.east, t.elev, t.north);
+          d.position.set(
+            t.east - renderEast,
+            t.elev,
+            t.north - renderNorth
+          );
           d.scale.setScalar(t.sc * 0.4);
           d.rotation.set(0, t.rotY, 0);
           d.updateMatrix();
@@ -397,19 +422,20 @@ export function addTreeTerrainLayer(lmap, maplibregl) {
       render(gl, args) {
         if (!originMerc) return;
         if (lmap.getZoom() < TREE_MIN_ZOOM) return;
-        // 地图这一帧确定了用于绘制的地形，再提交树的位置和可见状态。
-        if (treeData.length && updateTerrainHeights()) this.applyMatrices();
+        const viewCenter = maplibregl.MercatorCoordinate.fromLngLat(lmap.getCenter(), 0);
+        const originChanged = updateRenderOrigin(viewCenter);
+        const heightsChanged = treeData.length > 0 && updateTerrainHeights();
+        // 原点和实例矩阵在同一帧一起提交，避免重定位时跳动。
+        if (originChanged || heightsChanged) this.applyMatrices();
         const mm = Array.isArray(args)
           ? args
           : (args.defaultProjectionData ? args.defaultProjectionData.mainMatrix : args.projectionMatrix);
         const m = new THREE.Matrix4().fromArray(mm);
         const horizontalUnit = originMerc.meterInMercatorCoordinateUnits();
-        // MapLibre ???????????????????
-        // X/Y ??????????????? Z ????????
-        const viewCenter = maplibregl.MercatorCoordinate.fromLngLat(lmap.getCenter(), 0);
+        // 水平单位沿用种树网格，高程单位跟随当前视图。
         const heightUnit = viewCenter.meterInMercatorCoordinateUnits();
         const l = new THREE.Matrix4()
-          .makeTranslation(originMerc.x, originMerc.y, originMerc.z)
+          .makeTranslation(renderMerc.x, renderMerc.y, 0)
           .scale(new THREE.Vector3(horizontalUnit, -horizontalUnit, heightUnit));
         this.camera.projectionMatrix = m.multiply(l);
         this.renderer.state.reset();
