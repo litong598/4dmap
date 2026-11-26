@@ -10,8 +10,6 @@ export function addTreeTerrainLayer(lmap, maplibregl) {
   const TOTAL_MAX = 10000;   // 视野内树数上限
   const GRID_M = 12;         // 网格树距（米）
   const JITTER_M = 3;       // 每棵树极坐标随机偏移最大距离（米）
-  const ROW_SPACING_M = 12;
-  const TREE_CLEARANCE_M = 4;
   const VARIANTS = 3;       // 树模型变体数
 
   const MODEL_URLS = [
@@ -21,6 +19,7 @@ export function addTreeTerrainLayer(lmap, maplibregl) {
   ];
 
   let treeData = [];
+  let grownCells = new Set();   // 已长过树的格子key = "gx,gy"
   let started = false;
   let variants = null;
   let originMerc = null;       
@@ -32,7 +31,6 @@ export function addTreeTerrainLayer(lmap, maplibregl) {
   const RENDER_REBASE_M = 256;
   let layer = null;
   let refreshTimer = null;
-  let lastRawCounts = '';
   const TREE_MIN_ZOOM = 17;
 
   function hash2(gx, gy, salt) {
@@ -180,156 +178,23 @@ export function addTreeTerrainLayer(lmap, maplibregl) {
     return Promise.all(tasks);
   }
 
-  function gridCandidate(gx, gy) {
-    const angle = hash2(gx, gy, 0) * Math.PI * 2 - Math.PI;
-    const radius = hash2(gx, gy, 1) * JITTER_M;
-    return {
-      key: 'wood:' + gx + ',' + gy,
-      gx, gy, kind: 'wood', priority: 2,
-      east: gx + radius * Math.cos(angle),
-      north: gy + radius * Math.sin(angle)
-    };
-  }
-
-  function createTree(candidate) {
-    const { key, east, north, kind, priority } = candidate;
+  function pushTree(gx, gy) {
+    const ang = hash2(gx, gy, 0) * Math.PI * 2 - Math.PI;
+    const rad = hash2(gx, gy, 1) * JITTER_M;
+    const e = gx + rad * Math.cos(ang);
+    const n = gy + rad * Math.sin(ang);
     const unit = originMerc.meterInMercatorCoordinateUnits();
-    // 外观按地理位置生成，点位不加随机偏移。
-    const seedX = kind === 'wood' ? candidate.gx : Math.round(east * 10);
-    const seedY = kind === 'wood' ? candidate.gy : Math.round(north * 10);
-    return {
-      key, east, north, kind, priority,
-      worldX: originMerc.x + east * unit,
-      worldY: originMerc.y - north * unit,
-      elev: null, terrainSampler: null, exaggeration: null,
-      sc: 0.8 + hash2(seedX, seedY, 2) * 0.6,
-      rotY: hash2(seedX, seedY, 3) * Math.PI * 2,
-      v: Math.floor(hash2(seedX, seedY, 4) * VARIANTS)
-    };
-  }
-
-  function ensureMappedTreeData() {
-    // 自定义 3D 图层不声明矢量 source，需要普通样式图层维持加载。
-    if (!lmap.getSource('補自然元素')) {
-      lmap.addSource('補自然元素', {
-        type: 'vector',
-        url: 'pmtiles://https://pub-76f7e7fbf50f4423b85486dda0feb0c9.r2.dev/瓦/木.pmtiles'
-      });
-    }
-    if (!lmap.getLayer('trees-point-data')) {
-      lmap.addLayer({
-        id: 'trees-point-data',
-        type: 'circle', source: '補自然元素', 'source-layer': '獨木',
-        minzoom: 15,
-        paint: { 'circle-radius': 1, 'circle-opacity': 0 }
-      });
-    }
-    if (!lmap.getLayer('trees-row-data')) {
-      lmap.addLayer({
-        id: 'trees-row-data',
-        type: 'line', source: '補自然元素', 'source-layer': '行木',
-        minzoom: 15,
-        paint: { 'line-width': 1, 'line-opacity': 0 }
-      });
-    }
-  }
-
-  function readFeatures(source, sourceLayer, filter) {
-    if (!lmap.getSource(source)) return [];
-    const options = { sourceLayer };
-    if (filter) options.filter = filter;
-    return lmap.querySourceFeatures(source, options);
-  }
-
-  function addMappedTree(lngLat, kind, area, candidates) {
-    if (!Array.isArray(lngLat) || !lngLat.slice(0, 2).every(Number.isFinite)) return;
-    const [east, north] = toEastNorth(lngLat[0], lngLat[1]);
-    addMappedPosition(east, north, kind, area, candidates);
-  }
-
-  function addMappedPosition(east, north, kind, area, candidates) {
-    if (east < area.minX || east > area.maxX || north < area.minY || north > area.maxY) return;
-    // 去除瓦片缓冲区内重复返回的点，精度约 10 厘米。
-    const key = kind + ':' + Math.round(east * 10) + ',' + Math.round(north * 10);
-    candidates.set(key, {
-      key, east, north, kind,
-      priority: kind === 'point' ? 0 : 1
+    treeData.push({
+      gx, gy, east: e, north: n,
+      worldX: originMerc.x + e * unit,
+      worldY: originMerc.y - n * unit,
+      elev: null,
+      terrainSampler: null,
+      exaggeration: null,
+      sc: 0.8 + hash2(gx, gy, 2) * 0.6,
+      rotY: hash2(gx, gy, 3) * Math.PI * 2,
+      v: Math.floor(hash2(gx, gy, 4) * VARIANTS)
     });
-  }
-
-  // 把线段先裁到视野范围，长线也只扫描附近的一段。
-  function clipSegment(ax, ay, bx, by, area) {
-    const dx = bx - ax;
-    const dy = by - ay;
-    let first = 0, last = 1;
-    const edges = [
-      [-dx, ax - area.minX], [dx, area.maxX - ax],
-      [-dy, ay - area.minY], [dy, area.maxY - ay]
-    ];
-    for (const [direction, distance] of edges) {
-      if (direction === 0) {
-        if (distance < 0) return null;
-        continue;
-      }
-      const t = distance / direction;
-      if (direction < 0) first = Math.max(first, t);
-      else last = Math.min(last, t);
-      if (first > last) return null;
-    }
-    return [first, last];
-  }
-
-  function collectRow(line, area, candidates) {
-    for (let i = 1; i < line.length; i++) {
-      let [ax, ay] = toEastNorth(line[i - 1][0], line[i - 1][1]);
-      let [bx, by] = toEastNorth(line[i][0], line[i][1]);
-      // 统一方向，防止重复线反向返回时改变树位。
-      if (ax > bx || (ax === bx && ay > by)) {
-        [ax, bx] = [bx, ax];
-        [ay, by] = [by, ay];
-      }
-      const length = Math.hypot(bx - ax, by - ay);
-      if (length < 0.01) continue;
-      const clipped = clipSegment(ax, ay, bx, by, area);
-      if (!clipped) continue;
-      const ux = (bx - ax) / length;
-      const uy = (by - ay) / length;
-      // 用固定网格坐标确定间距相位；直线被瓦片切开也沿用同一序列。
-      const phase = ax * ux + ay * uy;
-      const first = phase + clipped[0] * length;
-      const last = phase + clipped[1] * length;
-      if (length < ROW_SPACING_M) {
-        addMappedPosition((ax + bx) / 2, (ay + by) / 2, 'row', area, candidates);
-        continue;
-      }
-      for (let d = Math.ceil(first / ROW_SPACING_M) * ROW_SPACING_M;
-           d <= last + 1e-7; d += ROW_SPACING_M) {
-        const distance = d - phase;
-        addMappedPosition(ax + distance * ux, ay + distance * uy, 'row', area, candidates);
-      }
-    }
-  }
-
-  function collectMappedTrees(area, candidates) {
-    const points = readFeatures('補自然元素', '獨木');
-    const rows = readFeatures('補自然元素', '行木');
-    for (const feature of points) {
-      const geometry = feature.geometry;
-      if (geometry.type === 'Point') {
-        addMappedTree(geometry.coordinates, 'point', area, candidates);
-      } else if (geometry.type === 'MultiPoint') {
-        for (const point of geometry.coordinates) addMappedTree(point, 'point', area, candidates);
-      }
-    }
-    for (const feature of rows) {
-      const geometry = feature.geometry;
-      if (geometry.type === 'LineString') {
-        collectRow(geometry.coordinates, area, candidates);
-      } else if (geometry.type === 'MultiLineString') {
-        for (const line of geometry.coordinates) collectRow(line, area, candidates);
-      }
-    }
-    return { rawPoints: points.length, rawRows: rows.length };
   }
 
   function collectTreeCells(co, area, candidates) {
@@ -355,17 +220,25 @@ export function addTreeTerrainLayer(lmap, maplibregl) {
     );
     for (let gx = x0; gx <= x1; gx += GRID_M) {
       for (let gy = y0; gy <= y1; gy += GRID_M) {
-        const key = 'wood:' + gx + ',' + gy;
+        const key = gx + ',' + gy;
         if (candidates.has(key) || !inPolyMeters(gx, gy, outer, holes)) continue;
-        candidates.set(key, gridCandidate(gx, gy));
+        candidates.set(key, { gx, gy });
       }
     }
   }
 
   function growTreesInView() {
     if (!originMerc || lmap.getZoom() < TREE_MIN_ZOOM) return;
-    const feats = readFeatures('開放免費地圖', 'landcover',
-      ['==', ['get', 'class'], 'wood']);
+    let feats;
+    try {
+      feats = lmap.querySourceFeatures('開放免費地圖', {
+        sourceLayer: 'landcover',
+        filter: ['==', ['get', 'class'], 'wood']
+      });
+    } catch {
+      return;
+    }
+    if (!feats?.length) return;
 
     const center = lmap.getCenter();
     const [curE, curN] = toEastNorth(center.lng, center.lat);
@@ -389,12 +262,10 @@ export function addTreeTerrainLayer(lmap, maplibregl) {
     const distance2 = (x, y) => (x - curE) ** 2 + (y - curN) ** 2;
     const candidates = new Map();
     for (const t of treeData) {
-      if (distance2(t.east, t.north) <= recycleR2) {
-        candidates.set(t.key, t);
+      if (distance2(t.gx, t.gy) <= recycleR2) {
+        candidates.set(t.gx + ',' + t.gy, { gx: t.gx, gy: t.gy, tree: t });
       }
     }
-
-    const rawCounts = collectMappedTrees(area, candidates);
 
     for (const f of feats) {
       const g = f.geometry;
@@ -407,65 +278,34 @@ export function addTreeTerrainLayer(lmap, maplibregl) {
       }
     }
 
-    const sorted = [...candidates.values()];
-    sorted.sort((a, b) =>
-      a.priority - b.priority ||
-      distance2(a.east, a.north) - distance2(b.east, b.north) ||
-      a.key.localeCompare(b.key)
-    );
-
-    // 独树优先于树排，树排优先于树林填充。
-    const occupied = new Map();
-    const selected = [];
-    const cellSize = TREE_CLEARANCE_M;
-    for (const candidate of sorted) {
-      const cx = Math.floor(candidate.east / cellSize);
-      const cy = Math.floor(candidate.north / cellSize);
-      let crowded = false;
-      for (let dx = -1; dx <= 1 && !crowded; dx++) {
-        for (let dy = -1; dy <= 1 && !crowded; dy++) {
-          const neighbors = occupied.get((cx + dx) + ',' + (cy + dy)) || [];
-          crowded = neighbors.some(other =>
-            // 真实独树点保留，空间避让用于树排和树林填充。
-            candidate.kind !== 'point' &&
-            Math.hypot(candidate.east - other.east, candidate.north - other.north) < cellSize
-          );
-        }
-      }
-      if (crowded) continue;
-      selected.push(candidate);
-      const bucketKey = cx + ',' + cy;
-      if (!occupied.has(bucketKey)) occupied.set(bucketKey, []);
-      occupied.get(bucketKey).push(candidate);
-      if (selected.length === TOTAL_MAX) break;
+    const selected = [...candidates.entries()];
+    if (selected.length > TOTAL_MAX) {
+      selected.sort(([, a], [, b]) =>
+        distance2(a.gx, a.gy) - distance2(b.gx, b.gy) ||
+        a.gx - b.gx || a.gy - b.gy
+      );
+      selected.length = TOTAL_MAX;
     }
 
-    const previous = new Map(treeData.map(tree => [tree.key, tree]));
-    const sameKeys = selected.length === treeData.length &&
-      selected.every(candidate => previous.has(candidate.key));
-    if (sameKeys) {
-      if (lastRawCounts !== JSON.stringify(rawCounts)) {
-        console.log('[tree-data]', rawCounts);
-        lastRawCounts = JSON.stringify(rawCounts);
-      }
-      return;
-    }
-
-    const added = selected.filter(candidate => !previous.has(candidate.key)).length;
+    const added = selected.reduce((n, [, c]) => n + (c.tree ? 0 : 1), 0);
     const recycled = treeData.length - (selected.length - added);
-    treeData = selected.map(candidate => previous.get(candidate.key) || createTree(candidate));
+    if (added === 0 && recycled === 0) return;
+
+    treeData = [];
+    grownCells.clear();
+    for (const [key, c] of selected) {
+      grownCells.add(key);
+      if (c.tree) treeData.push(c.tree);
+      else pushTree(c.gx, c.gy);
+    }
 
     layer?.onTreesChanged?.();
-    const counts = { point: 0, row: 0, wood: 0 };
-    for (const tree of treeData) counts[tree.kind]++;
-    lastRawCounts = JSON.stringify(rawCounts);
-    console.log('[tree]', { added, recycled, total: treeData.length, ...counts, ...rawCounts });
+    console.log('[tree] 新增 +' + added + ' 回收 ' + recycled + ' 总数 ' + treeData.length);
   }
 
   async function main() {
     if (started) return;
     started = true;
-    ensureMappedTreeData();
 
     try {
       variants = await loadGLBModels();
@@ -610,19 +450,13 @@ export function addTreeTerrainLayer(lmap, maplibregl) {
       return;
     }
     function scheduleGrow() {
-      if (refreshTimer) return;
+      if (refreshTimer) clearTimeout(refreshTimer);
       refreshTimer = setTimeout(() => {
-        refreshTimer = null;
         growTreesInView();
-      }, 100);
+      }, 300);
     }
     lmap.on('idle', scheduleGrow);
     lmap.on('moveend', scheduleGrow);
-    lmap.on('sourcedata', (event) => {
-      if (event.sourceDataType !== 'content') return;
-      if (event.sourceId === '補自然元素' || event.sourceId === '開放免費地圖') scheduleGrow();
-    });
-    lmap.once('remove', () => clearTimeout(refreshTimer));
 
     // 初始长一次
     growTreesInView();
