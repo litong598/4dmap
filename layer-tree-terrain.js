@@ -32,6 +32,7 @@ export function addTreeTerrainLayer(lmap, maplibregl) {
   const RENDER_REBASE_M = 256;
   let layer = null;
   let refreshTimer = null;
+  let lastRawCounts = '';
   const TREE_MIN_ZOOM = 17;
 
   function hash2(gx, gy, salt) {
@@ -207,6 +208,32 @@ export function addTreeTerrainLayer(lmap, maplibregl) {
     };
   }
 
+  function ensureMappedTreeData() {
+    // 自定义 3D 图层不声明矢量 source，需要普通样式图层维持加载。
+    if (!lmap.getSource('補自然元素')) {
+      lmap.addSource('補自然元素', {
+        type: 'vector',
+        url: 'pmtiles://https://pub-76f7e7fbf50f4423b85486dda0feb0c9.r2.dev/瓦/木.pmtiles'
+      });
+    }
+    if (!lmap.getLayer('trees-point-data')) {
+      lmap.addLayer({
+        id: 'trees-point-data',
+        type: 'circle', source: '補自然元素', 'source-layer': '獨木',
+        minzoom: 15,
+        paint: { 'circle-radius': 1, 'circle-opacity': 0 }
+      });
+    }
+    if (!lmap.getLayer('trees-row-data')) {
+      lmap.addLayer({
+        id: 'trees-row-data',
+        type: 'line', source: '補自然元素', 'source-layer': '行木',
+        minzoom: 15,
+        paint: { 'line-width': 1, 'line-opacity': 0 }
+      });
+    }
+  }
+
   function readFeatures(source, sourceLayer, filter) {
     if (!lmap.getSource(source)) return [];
     const options = { sourceLayer };
@@ -284,7 +311,9 @@ export function addTreeTerrainLayer(lmap, maplibregl) {
   }
 
   function collectMappedTrees(area, candidates) {
-    for (const feature of readFeatures('補自然元素', '獨木')) {
+    const points = readFeatures('補自然元素', '獨木');
+    const rows = readFeatures('補自然元素', '行木');
+    for (const feature of points) {
       const geometry = feature.geometry;
       if (geometry.type === 'Point') {
         addMappedTree(geometry.coordinates, 'point', area, candidates);
@@ -292,7 +321,7 @@ export function addTreeTerrainLayer(lmap, maplibregl) {
         for (const point of geometry.coordinates) addMappedTree(point, 'point', area, candidates);
       }
     }
-    for (const feature of readFeatures('補自然元素', '行木')) {
+    for (const feature of rows) {
       const geometry = feature.geometry;
       if (geometry.type === 'LineString') {
         collectRow(geometry.coordinates, area, candidates);
@@ -300,6 +329,7 @@ export function addTreeTerrainLayer(lmap, maplibregl) {
         for (const line of geometry.coordinates) collectRow(line, area, candidates);
       }
     }
+    return { rawPoints: points.length, rawRows: rows.length };
   }
 
   function collectTreeCells(co, area, candidates) {
@@ -364,7 +394,7 @@ export function addTreeTerrainLayer(lmap, maplibregl) {
       }
     }
 
-    collectMappedTrees(area, candidates);
+    const rawCounts = collectMappedTrees(area, candidates);
 
     for (const f of feats) {
       const g = f.geometry;
@@ -413,7 +443,13 @@ export function addTreeTerrainLayer(lmap, maplibregl) {
     const previous = new Map(treeData.map(tree => [tree.key, tree]));
     const sameKeys = selected.length === treeData.length &&
       selected.every(candidate => previous.has(candidate.key));
-    if (sameKeys) return;
+    if (sameKeys) {
+      if (lastRawCounts !== JSON.stringify(rawCounts)) {
+        console.log('[tree-data]', rawCounts);
+        lastRawCounts = JSON.stringify(rawCounts);
+      }
+      return;
+    }
 
     const added = selected.filter(candidate => !previous.has(candidate.key)).length;
     const recycled = treeData.length - (selected.length - added);
@@ -422,12 +458,14 @@ export function addTreeTerrainLayer(lmap, maplibregl) {
     layer?.onTreesChanged?.();
     const counts = { point: 0, row: 0, wood: 0 };
     for (const tree of treeData) counts[tree.kind]++;
-    console.log('[tree]', { added, recycled, total: treeData.length, ...counts });
+    lastRawCounts = JSON.stringify(rawCounts);
+    console.log('[tree]', { added, recycled, total: treeData.length, ...counts, ...rawCounts });
   }
 
   async function main() {
     if (started) return;
     started = true;
+    ensureMappedTreeData();
 
     try {
       variants = await loadGLBModels();
