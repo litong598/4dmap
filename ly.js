@@ -365,6 +365,23 @@ const 諸層 = [{
 		// "fill-pattern": "maplibre:park_11"
 	}
 },{
+	"id": "獨樹", "type": "circle",
+	"source": "補自然元素", "source-layer": "獨木",
+	"paint": {
+		"circle-radius": ["interpolate",["linear"],["zoom"], 15,0, 17,5],
+		"circle-color": "#21A675",
+		"circle-pitch-alignment": "map"
+	}
+},{
+	"id": "樹排", "type": "line",
+	"source": "補自然元素", "source-layer": "行木",
+	"layout": {"line-cap": "round", "line-join": "round"},
+	"paint": {
+		"line-width": ["interpolate",["linear"],["zoom"], 15,0, 17,5],
+		"line-color": "#21A675",
+		"line-opacity": ["interpolate",["linear"],["zoom"], 15,0, 17,0.4]
+	}
+},{
 	"id": "海底地形", "type": "color-relief", "source": "海底高程", "maxzoom": 9,
 	"paint": {'color-relief-color': [
 			'interpolate',
@@ -1294,10 +1311,8 @@ const 諸層 = [{
 		"fill-extrusion-height": ["interpolate",["linear"],["zoom"],
 			15, 0, 16, ["coalesce",["get", "render_height"],["*", ["coalesce", ["get", "building:levels"], 3], 3]]
 		],
-		"fill-extrusion-base": ["case",
-			[">=", ["get", "zoom"], 16],
-			["coalesce", ["get", "base_height"], ["get", "render_min_height"], 0],
-			0
+		"fill-extrusion-base": ["interpolate",["linear"],["zoom"],
+			15, 0, 16, ["coalesce", ["get", "render_min_height"], ["get", "base_height"], 0]
 		],
 		"fill-extrusion-opacity": 0.9
 	}
