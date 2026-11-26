@@ -60,7 +60,29 @@ export function addTreeTerrainLayer(lmap, maplibregl) {
   let lastCoverage = null;
   let lastTreeData = null;
   let lastExaggeration = null;
+  let lastMeshSize = null;
   let warnedTerrainAPI = false;
+
+  // 与地形网格一致：每格沿左上到右下的对角线分成两个三角形。
+  function sampleTerrainTriangle(sampler, x, y, meshSize) {
+    const step = TILE_EXTENT / meshSize;
+    const column = Math.min(meshSize - 1, Math.max(0, Math.floor(x / step)));
+    const row = Math.min(meshSize - 1, Math.max(0, Math.floor(y / step)));
+    const x0 = column * step;
+    const y0 = row * step;
+    const u = Math.min(1, Math.max(0, (x - x0) / step));
+    const v = Math.min(1, Math.max(0, (y - y0) / step));
+    const topLeft = sampler(x0, y0, TILE_EXTENT);
+    const bottomRight = sampler(x0 + step, y0 + step, TILE_EXTENT);
+
+    if (v >= u) {
+      const bottomLeft = sampler(x0, y0 + step, TILE_EXTENT);
+      return topLeft * (1 - v) + bottomLeft * (v - u) + bottomRight * u;
+    }
+
+    const topRight = sampler(x0 + step, y0, TILE_EXTENT);
+    return topLeft * (1 - u) + topRight * (u - v) + bottomRight * v;
+  }
 
   function updateTerrainHeights() {
     // getTerrain() 返回配置。实际渲染瓦片索引在 Terrain 对象上。
@@ -69,14 +91,17 @@ export function addTreeTerrainLayer(lmap, maplibregl) {
       warnedTerrainAPI = true;
       console.warn('[tree] 当前 MapLibre 版本未提供地形覆盖索引，暂不显示无可用高程的树');
     }
-    const coverage = terrain?.getCoverageIndex?.() ?? null;
+    const meshSize = terrain?.meshSize;
+    const usableMesh = Number.isInteger(meshSize) && meshSize > 0;
+    const coverage = usableMesh ? terrain?.getCoverageIndex?.() ?? null : null;
     const exaggeration = terrain?.exaggeration ?? 1;
     if (coverage === lastCoverage && treeData === lastTreeData &&
-        exaggeration === lastExaggeration) return false;
+        exaggeration === lastExaggeration && meshSize === lastMeshSize) return false;
 
     lastCoverage = coverage;
     lastTreeData = treeData;
     lastExaggeration = exaggeration;
+    lastMeshSize = meshSize;
     let changed = false;
     for (const tree of treeData) {
       let sampler = null;
@@ -100,10 +125,14 @@ export function addTreeTerrainLayer(lmap, maplibregl) {
         }
       }
 
-      if (tree.terrainSampler === sampler && tree.exaggeration === exaggeration) continue;
+      if (tree.terrainSampler === sampler && tree.exaggeration === exaggeration &&
+          tree.terrainMeshSize === meshSize) continue;
       tree.terrainSampler = sampler;
       tree.exaggeration = exaggeration;
-      const sample = sampler ? sampler(x, y, TILE_EXTENT) * exaggeration : null;
+      tree.terrainMeshSize = meshSize;
+      const sample = sampler
+        ? sampleTerrainTriangle(sampler, x, y, meshSize) * exaggeration
+        : null;
       const elev = Number.isFinite(sample) ? sample : null;
       if (elev !== tree.elev) {
         tree.elev = elev;
@@ -345,7 +374,7 @@ export function addTreeTerrainLayer(lmap, maplibregl) {
           const t = treeData[i];
           if (t.elev == null) continue;
           const k = idx[t.v]++;
-          d.position.set(t.east, t.elev+0.5, t.north);
+          d.position.set(t.east, t.elev, t.north);
           d.scale.setScalar(t.sc * 0.4);
           d.rotation.set(0, t.rotY, 0);
           d.updateMatrix();
