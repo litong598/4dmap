@@ -7,7 +7,7 @@ if (/\sQQ|micromessenger/i.test(navigator.userAgent.toLowerCase())){
 import * as maplibregl from 'https://unpkg.com/maplibre-gl@6.19.0/dist/maplibre-gl.mjs';
 import { getSubsolarPoint, TerminatorLayer } from './layer-terminator.js';
 import { 轉瓦內字 } from './cvt/cc.js?g=b';
-import { Orienting, RouteNavigation } from './nav.js?t=4';
+import { Orienting, RouteNavigation } from './nav.js?t=5';
 import { addTreeTerrainLayer } from './layer-tree-terrain.js?v=12';
 const pmProtocol = new pmtiles.Protocol();
 maplibregl.addProtocol('pmtiles',pmProtocol.tile);
