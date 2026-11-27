@@ -222,7 +222,7 @@ lmap.on("click", (e) => {
 addTreeTerrainLayer(lmap,maplibregl);
 
 const 導航 = new RouteNavigation(lmap, maplibregl);
-導航.load('network.json?v=3').then(() => {
+導航.load('network.json?v=4').then(() => {
 	document.getElementById('規劃路線').addEventListener('click', () => {
 		const a = document.getElementById('起點名').value.trim();
 		const b = document.getElementById('終點名').value.trim();
