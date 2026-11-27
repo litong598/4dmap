@@ -7,17 +7,17 @@ export function addTreeTerrainLayer(lmap, maplibregl) {
     return;
   }
 
-  const TOTAL_MAX = 10000;   // 视野内树数上限
+  const TOTAL_MAX = 3000;   // 视野内树数上限
   const ROW_SPACING_M = 8; // 树排间距（米）
   const GRID_M = 12;         // 网格树距（米）
   const JITTER_M = 3;       // 每棵树极坐标随机偏移最大距离（米）
   const VARIANTS = 3;       // 树模型变体数
 
   const MODEL_URLS = [
-    'models/tree-deciduous-a.glb',
-    'models/tree-deciduous-b.glb',
-    'models/tree-evergreen.glb'
-  ];
+  'models/tree-eztree-oak.glb?v=2',
+  'models/tree-eztree-ash.glb?v=2',
+  'models/tree-eztree-pine.glb?v=2'
+];
 
   let treeData = [];
   let grownCells = new Set();   // 已长过树的格子key = "gx,gy"
